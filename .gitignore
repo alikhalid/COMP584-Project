@@ -3,3 +3,5 @@ jupyter.pid
 jupyter.stderr
 jupyter.stdout
 proposal.docx
+.pycache/
+*.pt
