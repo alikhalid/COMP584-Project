@@ -5,3 +5,4 @@ jupyter.stdout
 proposal.docx
 .pycache/
 *.pt
+__pycache__/
