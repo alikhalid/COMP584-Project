@@ -6,3 +6,7 @@ proposal.docx
 .pycache/
 *.pt
 __pycache__/
+*.json
+*.csv
+*.txt
+*.tex

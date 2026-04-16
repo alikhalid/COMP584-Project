@@ -1,6 +1,7 @@
 import random
 import re
 import string
+import math
 from typing import Callable, Iterable, Optional, Sequence
 
 
@@ -216,10 +217,58 @@ def evaluate_ood_perplexity(
     return evaluate_perplexity(ood_texts, perplexity_fn, max_items=max_items)
 
 
+def nats_to_bits_per_byte(avg_nll_nats_per_byte: float) -> float:
+    return float(avg_nll_nats_per_byte / math.log(2.0))
+
+
+def bits_per_byte_to_perplexity(bits_per_byte: float) -> float:
+    return float(2.0 ** bits_per_byte)
+
+
+def evaluate_bits_per_byte(
+    texts: Sequence[str],
+    byte_nll_fn: Callable[[Sequence[str]], float],
+    max_items: Optional[int] = None,
+) -> float:
+    subset = list(texts[:max_items]) if max_items is not None else list(texts)
+    if not subset:
+        raise ValueError("evaluate_bits_per_byte requires at least one text.")
+    avg_nll_nats_per_byte = float(byte_nll_fn(subset))
+    return nats_to_bits_per_byte(avg_nll_nats_per_byte)
+
+
+def evaluate_noisy_bits_per_byte(
+    texts: Sequence[str],
+    byte_nll_fn: Callable[[Sequence[str]], float],
+    char_error_rate: float = 0.05,
+    alphabet: Optional[str] = None,
+    seed: Optional[int] = None,
+    max_items: Optional[int] = None,
+) -> float:
+    subset = list(texts[:max_items]) if max_items is not None else list(texts)
+    noisy_texts = make_noisy_corpus(
+        subset,
+        char_error_rate=char_error_rate,
+        alphabet=alphabet,
+        seed=seed,
+    )
+    avg_nll_nats_per_byte = float(byte_nll_fn(noisy_texts))
+    return nats_to_bits_per_byte(avg_nll_nats_per_byte)
+
+
+def evaluate_ood_bits_per_byte(
+    ood_texts: Sequence[str],
+    byte_nll_fn: Callable[[Sequence[str]], float],
+    max_items: Optional[int] = None,
+) -> float:
+    return evaluate_bits_per_byte(ood_texts, byte_nll_fn, max_items=max_items)
+
+
 def evaluate_all_metrics(
     *,
     in_domain_texts: Sequence[str],
-    perplexity_fn: Callable[[Sequence[str]], float],
+    perplexity_fn: Optional[Callable[[Sequence[str]], float]] = None,
+    byte_nll_fn: Optional[Callable[[Sequence[str]], float]] = None,
     predicted_boundary_sets: Optional[Sequence[Iterable[int]]] = None,
     gold_boundary_sets: Optional[Sequence[Iterable[int]]] = None,
     noisy_char_error_rate: float = 0.05,
@@ -228,28 +277,52 @@ def evaluate_all_metrics(
     ood_texts: Optional[Sequence[str]] = None,
     max_items: Optional[int] = None,
 ) -> dict[str, object]:
-    results: dict[str, object] = {
-        "ppl": evaluate_perplexity(
+    if perplexity_fn is None and byte_nll_fn is None:
+        raise ValueError("evaluate_all_metrics requires either perplexity_fn or byte_nll_fn.")
+
+    results: dict[str, object] = {}
+
+    if byte_nll_fn is not None:
+        results["bpb"] = evaluate_bits_per_byte(
+            in_domain_texts,
+            byte_nll_fn,
+            max_items=max_items,
+        )
+        results["noisy_bpb"] = evaluate_noisy_bits_per_byte(
+            in_domain_texts,
+            byte_nll_fn,
+            char_error_rate=noisy_char_error_rate,
+            alphabet=noise_alphabet,
+            seed=noise_seed,
+            max_items=max_items,
+        )
+        if ood_texts is not None:
+            results["ood_bpb"] = evaluate_ood_bits_per_byte(
+                ood_texts,
+                byte_nll_fn,
+                max_items=max_items,
+            )
+
+    if perplexity_fn is not None:
+        results["ppl"] = evaluate_perplexity(
             in_domain_texts,
             perplexity_fn,
             max_items=max_items,
-        ),
-        "noisy_ppl": evaluate_noisy_perplexity(
+        )
+        results["noisy_ppl"] = evaluate_noisy_perplexity(
             in_domain_texts,
             perplexity_fn,
             char_error_rate=noisy_char_error_rate,
             alphabet=noise_alphabet,
             seed=noise_seed,
             max_items=max_items,
-        ),
-    }
-
-    if ood_texts is not None:
-        results["ood_ppl"] = evaluate_ood_perplexity(
-            ood_texts,
-            perplexity_fn,
-            max_items=max_items,
         )
+        if ood_texts is not None:
+            results["ood_ppl"] = evaluate_ood_perplexity(
+                ood_texts,
+                perplexity_fn,
+                max_items=max_items,
+            )
 
     if predicted_boundary_sets is not None and gold_boundary_sets is not None:
         results["boundary_f1"] = corpus_boundary_f1(
